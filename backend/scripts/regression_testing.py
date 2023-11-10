@@ -10,12 +10,12 @@ from typing import Optional
 
 import requests
 
-from danswer.configs.app_configs import APP_PORT
-from danswer.configs.app_configs import DOCUMENT_INDEX_NAME
-from danswer.configs.constants import SOURCE_TYPE
-
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
+
+from danswer.configs.app_configs import APP_PORT, DOCUMENT_INDEX_NAME  # noqa: E402
+from danswer.configs.constants import SOURCE_TYPE  # noqa: E402
+
 REG_FOLDER = f"{parent_dir}/scripts/.regfiles/"
 
 
@@ -639,4 +639,3 @@ if __name__ == "__main__":
         sys.exit(1)
 
     RegAnalysis(args.execution, args.regfiles, args.q__queries, args.threshold)()
-    # RegAnalysis("new", [], ["Comment ajouter un compte AWS dans Synapps?"], 0.0)()
