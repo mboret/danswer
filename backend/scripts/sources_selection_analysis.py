@@ -16,7 +16,7 @@ sys.path.append(parent_dir)
 from danswer.configs.app_configs import APP_PORT, DOCUMENT_INDEX_NAME  # noqa: E402
 from danswer.configs.constants import SOURCE_TYPE  # noqa: E402
 
-REG_FOLDER = f"{parent_dir}/scripts/.regfiles/"
+ANALYSIS_FOLDER = f"{parent_dir}/scripts/.analysisfiles/"
 
 
 def color_output(
@@ -194,7 +194,7 @@ class CompareAnalysis:
         if new_doc_rank == "not_ranked":
             color_output(
                 (
-                    "NOTE: The document is missing in the 'current' regression file. "
+                    "NOTE: The document is missing in the 'current' analysis file. "
                     "Unable to identify more details about the reason for the change."
                 ),
                 model="note",
@@ -308,11 +308,11 @@ class CompareAnalysis:
         self.check_documents_score()
 
 
-class RegAnalysis:
+class SelectionAnalysis:
     def __init__(
         self,
         exectype: str,
-        regfiles: list = [],
+        anlysisfiles: list = [],
         queries: list = [],
         threshold: float = 0.0,
     ) -> None:
@@ -320,14 +320,14 @@ class RegAnalysis:
 
         Args:
             exectype (str): The execution mode (new or compare)
-            regfiles (list, optional): List of regression files to compare or if only one, to use as the base. Defaults to [].
+            anlysisfiles (list, optional): List of analysis files to compare or if only one, to use as the base. Defaults to [].
                                         Requiered only by the 'compare' mode
             queries (list, optional): The queries to analysed. Defaults to [].
                                         Required only by the 'new' mode
             threshold (float): The minimum difference (percentage) between scores to raise an anomaly
         """
         self._exectype = exectype
-        self._regfiles = regfiles
+        self._anlysisfiles = anlysisfiles
         self._queries = queries
         self._threshold = threshold
 
@@ -370,24 +370,25 @@ class RegAnalysis:
 
         return json.loads(response.content)
 
-    def get_regression_files(self) -> list[str]:
-        """Returns the list of existing regression files.
+    def get_analysis_files(self) -> list[str]:
+        """Returns the list of existing analysis files.
 
         Returns:
             list[str]: List of filename
         """
-        return [f for f in listdir(REG_FOLDER) if isfile(join(REG_FOLDER, f))]
+        os.makedirs(ANALYSIS_FOLDER, exist_ok=True)
+        return [f for f in listdir(ANALYSIS_FOLDER) if isfile(join(ANALYSIS_FOLDER, f))]
 
-    def get_regression_file_content(self, filename: str) -> list[dict]:
-        """Returns the content of a regression file
+    def get_analysis_file_content(self, filename: str) -> list[dict]:
+        """Returns the content of an analysis file
 
         Args:
-            filename (str): The regression filename
+            filename (str): The analysis filename
 
         Returns:
             list[dict]: Content of the selected file
         """
-        with open(f"{REG_FOLDER}{filename}", "r") as f:
+        with open(f"{ANALYSIS_FOLDER}{filename}", "r") as f:
             return json.load(f)
 
     def extract_content(self, contents: dict) -> dict:
@@ -408,7 +409,7 @@ class RegAnalysis:
             )
         }
 
-    def save_regfile(self, content: list[dict]) -> Optional[str]:
+    def save_anlysisfile(self, content: list[dict]) -> Optional[str]:
         """Save the extracted content
 
         Args:
@@ -418,17 +419,17 @@ class RegAnalysis:
             str: The filname
         """
         filename = datetime.now().strftime("%Y_%m_%d-%I_%M_%S")
-        reg_file = f"{REG_FOLDER}{filename}.json"
+        analysis_file = f"{ANALYSIS_FOLDER}{filename}.json"
 
         try:
-            with open(reg_file, "w") as f:
+            with open(analysis_file, "w") as f:
                 json.dump(content, f, indent=4)
         except Exception as e:
-            color_output(f"Unable to create the regression file: {e}", model="critical")
+            color_output(f"Unable to create the analysis file: {e}", model="critical")
             return None
 
-        color_output(f"Regression file created: {reg_file}", model="debug")
-        return reg_file
+        color_output(f"Regression file created: {analysis_file}", model="debug")
+        return analysis_file
 
     def new(self) -> Optional[str]:
         """Manage the process to create a new analysis file
@@ -441,35 +442,37 @@ class RegAnalysis:
             color_output("Missing queries", model="critical")
             sys.exit(1)
 
-        color_output("Generating a new regression file...", model="debug")
-        regfile = []
+        color_output("Generating a new analysis file...", model="debug")
+        anlysisfile = []
 
         for query in self._queries:
             color_output(f"Let's evaluate the query: '{query}'", model="debug")
             contents = self.do_request(query)
 
-            regfile.append(
+            anlysisfile.append(
                 {"query": query, "selected_documents": self.extract_content(contents)}
             )
 
-        return self.save_regfile(regfile)
+        return self.save_anlysisfile(anlysisfile)
 
     def compare(
-        self, previous_regfile_content: list[dict], new_regfile_content: list[dict]
+        self,
+        previous_anlysisfile_content: list[dict],
+        new_anlysisfile_content: list[dict],
     ) -> None:
         """Manage the process to compare two analysis
 
         Args:
-            previous_regfile_content (list): Previous content analysis
-            new_regfile_content (list): New content analysis
+            previous_anlysisfile_content (list): Previous content analysis
+            new_anlysisfile_content (list): New content analysis
         """
         for query in self._queries:
             # Extract data regarding the selected source documents
             prev_querie_content = [
-                x for x in previous_regfile_content if x["query"] == query
+                x for x in previous_anlysisfile_content if x["query"] == query
             ][0]["selected_documents"]
             new_querie_content = [
-                x for x in new_regfile_content if x["query"] == query
+                x for x in new_anlysisfile_content if x["query"] == query
             ][0]["selected_documents"]
 
             color_output(f"Analysing the query: '{query}'", model="info2")
@@ -480,24 +483,24 @@ class RegAnalysis:
 
         color_output("All the defined queries have been evaluated.", model="info2")
 
-    def validate_regfiles(self) -> bool:
-        """Validate that the selected regressions files exist
+    def validate_anlysisfiles(self) -> bool:
+        """Validate that the selected analysis files exist
 
         Returns:
             bool: True if all of them exist. False otherwise
         """
-        existing_regfiles = self.get_regression_files()
+        existing_anlysisfiles = self.get_analysis_files()
 
-        if missing_regfiles := [
-            x for x in self._regfiles if x not in existing_regfiles
+        if missing_anlysisfiles := [
+            x for x in self._anlysisfiles if x not in existing_anlysisfiles
         ]:
             color_output(
-                f"Missing regression file(s) '{', '.join(missing_regfiles)}' - NOT FOUND",
+                f"Missing analysis file(s) '{', '.join(missing_anlysisfiles)}' - NOT FOUND",
                 model="critical",
             )
-            regfiles = "\n ".join(existing_regfiles)
-            color_output("Available regression files:", model="info2")
-            color_output(regfiles)
+            anlysisfiles = "\n ".join(existing_anlysisfiles)
+            color_output("Available analysis files:", model="info2")
+            color_output(anlysisfiles)
             return False
 
         return True
@@ -506,54 +509,58 @@ class RegAnalysis:
         if self._exectype == "new":
             self.new()
         elif self._exectype == "compare":
-            self._regfiles = [x.replace(".json", "") + ".json" for x in self._regfiles]
+            self._anlysisfiles = [
+                x.replace(".json", "") + ".json" for x in self._anlysisfiles
+            ]
 
-            if not self.validate_regfiles():
+            if not self.validate_anlysisfiles():
                 sys.exit(1)
 
             color_output(
-                "Extracting queries from the existing reg file...", model="debug"
+                "Extracting queries from the existing analysis file...", model="debug"
             )
-            previous_regfile_content = self.get_regression_file_content(
-                self._regfiles[0]
+            previous_anlysisfile_content = self.get_analysis_file_content(
+                self._anlysisfiles[0]
             )
 
             # Extract the queries
-            self._queries = sorted([x["query"] for x in previous_regfile_content])
+            self._queries = sorted([x["query"] for x in previous_anlysisfile_content])
             color_output(
                 f"Extracted queries: {', '.join(self._queries)}", model="debug"
             )
 
-            if len(self._regfiles) == 1:
+            if len(self._anlysisfiles) == 1:
                 if new_file := self.new():
-                    new_regfile_content = self.get_regression_file_content(
+                    new_anlysisfile_content = self.get_analysis_file_content(
                         new_file.split("/")[-1:][0]
                     )
-                    return self.compare(previous_regfile_content, new_regfile_content)
+                    return self.compare(
+                        previous_anlysisfile_content, new_anlysisfile_content
+                    )
                 else:
                     color_output(
-                        "Unable to generate a new regression file", model="critical"
+                        "Unable to generate a new analysis file", model="critical"
                     )
                     sys.exit(1)
             else:
                 color_output(
                     (
-                        f"For the rest of this execution, the reg file '{self._regfiles[0]}' "
-                        "is identified as 'previous' and '{self._regfiles[1]}' as 'current'"
+                        f"For the rest of this execution, the analysis file '{self._anlysisfiles[0]}' "
+                        "is identified as 'previous' and '{self._anlysisfiles[1]}' as 'current'"
                     ),
                     model="info2",
                 )
-                new_regfile_content = self.get_regression_file_content(
-                    self._regfiles[1]
+                new_anlysisfile_content = self.get_analysis_file_content(
+                    self._anlysisfiles[1]
                 )
-                new_queries = sorted([x["query"] for x in new_regfile_content])
+                new_queries = sorted([x["query"] for x in new_anlysisfile_content])
                 if new_queries != self._queries:
                     color_output(
-                        "Unable to compare regression files as the queries are differents",
+                        "Unable to compare analysis files as the queries are differents",
                         model="critical",
                     )
                     sys.exit(1)
-                self.compare(previous_regfile_content, new_regfile_content)
+                self.compare(previous_anlysisfile_content, new_anlysisfile_content)
 
 
 def validate_cmd_args(args: argparse.Namespace) -> bool:
@@ -572,15 +579,15 @@ def validate_cmd_args(args: argparse.Namespace) -> bool:
         )
         return False
     elif args.execution == "compare":
-        if not args.regfiles:
+        if not args.anlysisfiles:
             color_output(
-                "Missing argument. When the execution type is set to 'compare' the '--regfiles' argument must be defined",
+                "Missing argument. When the execution type is set to 'compare' the '--anlysisfiles' argument must be defined",
                 model="critical",
             )
             return False
-        elif len(args.regfiles) > 2:
+        elif len(args.anlysisfiles) > 2:
             color_output(
-                "Too many arguments. The '--regfiles' argument cannot be repeated more than 2 times.",
+                "Too many arguments. The '--anlysisfiles' argument cannot be repeated more than 2 times.",
                 model="critical",
             )
             return False
@@ -596,14 +603,14 @@ if __name__ == "__main__":
         choices=["new", "compare"],
         default="new",
         help=(
-            "The execution type. Must be 'new' to generate a new regression file "
+            "The execution type. Must be 'new' to generate a new analysis file "
             "or 'compare' to compare a previous execution with a new one based on the same queries"
         ),
     )
 
     parser.add_argument(
         "-r",
-        "--regfiles",
+        "--anlysisfiles",
         action="extend",
         default=[],
         nargs=1,
@@ -638,4 +645,6 @@ if __name__ == "__main__":
     if not validate_cmd_args(args):
         sys.exit(1)
 
-    RegAnalysis(args.execution, args.regfiles, args.q__queries, args.threshold)()
+    SelectionAnalysis(
+        args.execution, args.anlysisfiles, args.q__queries, args.threshold
+    )()
