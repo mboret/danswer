@@ -2,4 +2,3 @@
 .DS_store
 .venv
 .mypy_cache
-.analysisfiles
