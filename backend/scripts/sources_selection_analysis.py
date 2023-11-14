@@ -13,7 +13,7 @@ import requests
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(parent_dir)
 
-from danswer.configs.app_configs import APP_PORT, DOCUMENT_INDEX_NAME  # noqa: E402
+from danswer.configs.app_configs import DOCUMENT_INDEX_NAME  # noqa: E402
 from danswer.configs.constants import SOURCE_TYPE  # noqa: E402
 
 ANALYSIS_FOLDER = f"{parent_dir}/scripts/.analysisfiles/"
@@ -315,6 +315,8 @@ class SelectionAnalysis:
         anlysisfiles: list = [],
         queries: list = [],
         threshold: float = 0.0,
+        web_port: int = 3000,
+        auth_cookie: str = None,
     ) -> None:
         """
 
@@ -324,12 +326,29 @@ class SelectionAnalysis:
                                         Requiered only by the 'compare' mode
             queries (list, optional): The queries to analysed. Defaults to [].
                                         Required only by the 'new' mode
-            threshold (float): The minimum difference (percentage) between scores to raise an anomaly
+            threshold (float, optional): The minimum difference (percentage) between scores to raise an anomaly
+            web_port (int, optional): The port of the UI. Defaults to 3000 (local exec port)
+            auth_cookie (str, optional): The Auth cookie value (fastapiusersauth). Defaults to None.
         """
         self._exectype = exectype
         self._anlysisfiles = anlysisfiles
         self._queries = queries
         self._threshold = threshold
+        self._web_port = web_port
+        self._auth_cookie = auth_cookie
+
+    def prepare(self) -> bool:
+        """Create the requirements to execute this script
+
+        Returns:
+            bool: True if all the requirements are setup. False otherwise
+        """
+        try:
+            os.makedirs(ANALYSIS_FOLDER, exist_ok=True)
+            return True
+        except Exception as e:
+            color_output(f"Unable to setup the requirements: {e}", model="critical")
+            return False
 
     def do_request(self, query: str) -> dict:
         """Request the Danswer API
@@ -340,7 +359,9 @@ class SelectionAnalysis:
         Returns:
             dict: The Danswer API response content
         """
-        endpoint = f"http://127.0.0.1:{APP_PORT}/direct-qa"
+        cookies = {"fastapiusersauth": self._auth_cookie} if self._auth_cookie else {}
+
+        endpoint = f"http://127.0.0.1:{self._web_port}/api/direct-qa"
         query_json = {
             "query": query,
             "collection": DOCUMENT_INDEX_NAME,
@@ -351,7 +372,7 @@ class SelectionAnalysis:
             "favor_recent": True,
         }
         try:
-            response = requests.post(endpoint, json=query_json)
+            response = requests.post(endpoint, json=query_json, cookies=cookies)
             if response.status_code != 200:
                 color_output(
                     (
@@ -376,7 +397,6 @@ class SelectionAnalysis:
         Returns:
             list[str]: List of filename
         """
-        os.makedirs(ANALYSIS_FOLDER, exist_ok=True)
         return [f for f in listdir(ANALYSIS_FOLDER) if isfile(join(ANALYSIS_FOLDER, f))]
 
     def get_analysis_file_content(self, filename: str) -> list[dict]:
@@ -506,8 +526,12 @@ class SelectionAnalysis:
         return True
 
     def __call__(self) -> None:
+        if not self.prepare():
+            sys.exit(1)
+
         if self._exectype == "new":
             self.new()
+
         elif self._exectype == "compare":
             self._anlysisfiles = [
                 x.replace(".json", "") + ".json" for x in self._anlysisfiles
@@ -572,6 +596,12 @@ def validate_cmd_args(args: argparse.Namespace) -> bool:
     Returns:
         bool: True if the CMD arguments are valid. False otherwise
     """
+    if not args.execution:
+        color_output(
+            "Missing argument. The execution mode ('--execution') must be defined ('new' or 'compare')",
+            model="critical",
+        )
+        return False
     if args.execution == "new" and not args.q__queries:
         color_output(
             "Missing argument. When the execution type is set to 'new' the '--queries' argument must be defined",
@@ -597,30 +627,50 @@ def validate_cmd_args(args: argparse.Namespace) -> bool:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "-a",
+        "--auth",
+        type=str,
+        default=None,
+        help=(
+            "Currently, to get this script working when the Danswer Auth is "
+            "enabled, you must extract from the UI your cookie 'fastapiusersauth' "
+            "and then set it using this argument"
+        ),
+    )
+    parser.add_argument(
         "-e",
         "--execution",
         type=str,
         choices=["new", "compare"],
-        default="new",
+        default=None,
         help=(
             "The execution type. Must be 'new' to generate a new analysis file "
             "or 'compare' to compare a previous execution with a new one based on the same queries"
         ),
     )
-
     parser.add_argument(
-        "-r",
-        "--anlysisfiles",
+        "-f",
+        "--files",
         action="extend",
         default=[],
         nargs=1,
         help=(
-            "Regression file(s) to use for the comparison. Required if the execution arg is set "
+            "Analysis file(s) to use for the comparison. Required if the execution arg is set "
             "to 'compare'. NOTE: By repeating this argument, you can make a comparison between "
-            "two specific executions. If not repeated, a new execution will be performed"
+            "two specific executions. If not repeated, a new execution will be performed and "
+            "compared with the selected one."
         ),
     )
-
+    parser.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        default=3000,
+        help=(
+            "The Danswer Web (not the API) port. We use the UI to forward the requests to the API. "
+            "It should be '3000' for local dev and '80' if Danswer runs using docker compose."
+        ),
+    )
     parser.add_argument(
         "-q" "--queries",
         type=str,
@@ -632,7 +682,6 @@ if __name__ == "__main__":
             "NOTE: This argument can be repeated multiple times"
         ),
     )
-
     parser.add_argument(
         "-t",
         "--threshold",
@@ -646,5 +695,10 @@ if __name__ == "__main__":
         sys.exit(1)
 
     SelectionAnalysis(
-        args.execution, args.anlysisfiles, args.q__queries, args.threshold
+        args.execution,
+        args.files,
+        args.q__queries,
+        args.threshold,
+        args.port,
+        args.auth,
     )()
