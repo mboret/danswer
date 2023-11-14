@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from os import listdir
 from os.path import isfile
@@ -22,8 +23,8 @@ ANALYSIS_FOLDER = f"{parent_dir}/scripts/.analysisfiles/"
 def color_output(
     text: str,
     model: Optional[str] = None,
-    text_color: str = "black",
-    bg_color: str = "transparent",
+    text_color: str = "white",
+    bg_color: str = "black",
     text_style: str = "normal",
     text_prefix: str = "",
 ) -> None:
@@ -32,8 +33,8 @@ def color_output(
     Args:
         text (str): The text to display
         model (str, optional): A pre-defined output model. Defaults to None.
-        text_color (str, optional): Define the text color. Defaults to "black".
-        bg_color (str, optional): Define the background color. Defaults to "transparent".
+        text_color (str, optional): Define the text color. Defaults to "white".
+        bg_color (str, optional): Define the background color. Defaults to "black".
         text_style (str, optional): Define the text style. Defaults to "normal".
         text_prefix (str, optional): Set a text prefix. Defaults to "".
     """
@@ -44,7 +45,7 @@ def color_output(
             text_style = "bold"
         elif model == "critical":
             text_prefix = "CRITICAL: "
-            text_color = "black"
+            text_color = "white"
             bg_color = "red"
             text_style = "bold"
         elif model == "note":
@@ -312,30 +313,44 @@ class SelectionAnalysis:
     def __init__(
         self,
         exectype: str,
-        anlysisfiles: list = [],
+        analysisfiles: list = [],
         queries: list = [],
         threshold: float = 0.0,
         web_port: int = 3000,
         auth_cookie: str = None,
+        wait: int = 10,
     ) -> None:
         """
 
         Args:
             exectype (str): The execution mode (new or compare)
-            anlysisfiles (list, optional): List of analysis files to compare or if only one, to use as the base. Defaults to [].
+            analysisfiles (list, optional): List of analysis files to compare or if only one, to use as the base. Defaults to [].
                                         Requiered only by the 'compare' mode
             queries (list, optional): The queries to analysed. Defaults to [].
                                         Required only by the 'new' mode
             threshold (float, optional): The minimum difference (percentage) between scores to raise an anomaly
             web_port (int, optional): The port of the UI. Defaults to 3000 (local exec port)
             auth_cookie (str, optional): The Auth cookie value (fastapiusersauth). Defaults to None.
+            wait (int, optional): The waiting time (in seconds) to respect between queries.
+                                    It is helpful to avoid hitting the Generative AI rate limiting.
         """
         self._exectype = exectype
-        self._anlysisfiles = anlysisfiles
+        self._analysisfiles = analysisfiles
         self._queries = queries
         self._threshold = threshold
         self._web_port = web_port
         self._auth_cookie = auth_cookie
+        self._wait = wait
+
+    def _wait_between_queries(self, query: str) -> None:
+        """If there are remaining queries, waits for the defined time.
+
+        Args:
+            query (str): The latest executed query
+        """
+        if query != self._queries[-1]:
+            color_output(f"Next query in {self._wait} seconds", model="debug")
+            time.sleep(self._wait)
 
     def prepare(self) -> bool:
         """Create the requirements to execute this script
@@ -429,7 +444,7 @@ class SelectionAnalysis:
             )
         }
 
-    def save_anlysisfile(self, content: list[dict]) -> Optional[str]:
+    def save_analysisfile(self, content: list[dict]) -> Optional[str]:
         """Save the extracted content
 
         Args:
@@ -448,7 +463,7 @@ class SelectionAnalysis:
             color_output(f"Unable to create the analysis file: {e}", model="critical")
             return None
 
-        color_output(f"Regression file created: {analysis_file}", model="debug")
+        color_output(f"Analysis file created: {analysis_file}", model="debug")
         return analysis_file
 
     def new(self) -> Optional[str]:
@@ -463,36 +478,38 @@ class SelectionAnalysis:
             sys.exit(1)
 
         color_output("Generating a new analysis file...", model="debug")
-        anlysisfile = []
+        analysisfile = []
 
         for query in self._queries:
-            color_output(f"Let's evaluate the query: '{query}'", model="debug")
+            color_output(f"Gathering data of the query: '{query}'", model="info2")
             contents = self.do_request(query)
 
-            anlysisfile.append(
+            analysisfile.append(
                 {"query": query, "selected_documents": self.extract_content(contents)}
             )
+            color_output("Data gathered", model="info2")
+            self._wait_between_queries(query)
 
-        return self.save_anlysisfile(anlysisfile)
+        return self.save_analysisfile(analysisfile)
 
     def compare(
         self,
-        previous_anlysisfile_content: list[dict],
-        new_anlysisfile_content: list[dict],
+        previous_analysisfile_content: list[dict],
+        new_analysisfile_content: list[dict],
     ) -> None:
         """Manage the process to compare two analysis
 
         Args:
-            previous_anlysisfile_content (list): Previous content analysis
-            new_anlysisfile_content (list): New content analysis
+            previous_analysisfile_content (list): Previous content analysis
+            new_analysisfile_content (list): New content analysis
         """
         for query in self._queries:
             # Extract data regarding the selected source documents
             prev_querie_content = [
-                x for x in previous_anlysisfile_content if x["query"] == query
+                x for x in previous_analysisfile_content if x["query"] == query
             ][0]["selected_documents"]
             new_querie_content = [
-                x for x in new_anlysisfile_content if x["query"] == query
+                x for x in new_analysisfile_content if x["query"] == query
             ][0]["selected_documents"]
 
             color_output(f"Analysing the query: '{query}'", model="info2")
@@ -500,27 +517,28 @@ class SelectionAnalysis:
                 query, prev_querie_content, new_querie_content, self._threshold
             )()
             color_output(f"Analyse completed for the query: '{query}'", model="info2")
+            self._wait_between_queries(query)
 
         color_output("All the defined queries have been evaluated.", model="info2")
 
-    def validate_anlysisfiles(self) -> bool:
+    def validate_analysisfiles(self) -> bool:
         """Validate that the selected analysis files exist
 
         Returns:
             bool: True if all of them exist. False otherwise
         """
-        existing_anlysisfiles = self.get_analysis_files()
+        existing_analysisfiles = self.get_analysis_files()
 
-        if missing_anlysisfiles := [
-            x for x in self._anlysisfiles if x not in existing_anlysisfiles
+        if missing_analysisfiles := [
+            x for x in self._analysisfiles if x not in existing_analysisfiles
         ]:
             color_output(
-                f"Missing analysis file(s) '{', '.join(missing_anlysisfiles)}' - NOT FOUND",
+                f"Missing analysis file(s) '{', '.join(missing_analysisfiles)}' - NOT FOUND",
                 model="critical",
             )
-            anlysisfiles = "\n ".join(existing_anlysisfiles)
+            analysisfiles = "\n ".join(existing_analysisfiles)
             color_output("Available analysis files:", model="info2")
-            color_output(anlysisfiles)
+            color_output(analysisfiles)
             return False
 
         return True
@@ -533,33 +551,33 @@ class SelectionAnalysis:
             self.new()
 
         elif self._exectype == "compare":
-            self._anlysisfiles = [
-                x.replace(".json", "") + ".json" for x in self._anlysisfiles
+            self._analysisfiles = [
+                x.replace(".json", "") + ".json" for x in self._analysisfiles
             ]
 
-            if not self.validate_anlysisfiles():
+            if not self.validate_analysisfiles():
                 sys.exit(1)
 
             color_output(
                 "Extracting queries from the existing analysis file...", model="debug"
             )
-            previous_anlysisfile_content = self.get_analysis_file_content(
-                self._anlysisfiles[0]
+            previous_analysisfile_content = self.get_analysis_file_content(
+                self._analysisfiles[0]
             )
 
             # Extract the queries
-            self._queries = sorted([x["query"] for x in previous_anlysisfile_content])
+            self._queries = sorted([x["query"] for x in previous_analysisfile_content])
             color_output(
                 f"Extracted queries: {', '.join(self._queries)}", model="debug"
             )
 
-            if len(self._anlysisfiles) == 1:
+            if len(self._analysisfiles) == 1:
                 if new_file := self.new():
-                    new_anlysisfile_content = self.get_analysis_file_content(
+                    new_analysisfile_content = self.get_analysis_file_content(
                         new_file.split("/")[-1:][0]
                     )
                     return self.compare(
-                        previous_anlysisfile_content, new_anlysisfile_content
+                        previous_analysisfile_content, new_analysisfile_content
                     )
                 else:
                     color_output(
@@ -569,22 +587,22 @@ class SelectionAnalysis:
             else:
                 color_output(
                     (
-                        f"For the rest of this execution, the analysis file '{self._anlysisfiles[0]}' "
-                        "is identified as 'previous' and '{self._anlysisfiles[1]}' as 'current'"
+                        f"For the rest of this execution, the analysis file '{self._analysisfiles[0]}' "
+                        f"is identified as 'previous' and '{self._analysisfiles[1]}' as 'current'"
                     ),
                     model="info2",
                 )
-                new_anlysisfile_content = self.get_analysis_file_content(
-                    self._anlysisfiles[1]
+                new_analysisfile_content = self.get_analysis_file_content(
+                    self._analysisfiles[1]
                 )
-                new_queries = sorted([x["query"] for x in new_anlysisfile_content])
+                new_queries = sorted([x["query"] for x in new_analysisfile_content])
                 if new_queries != self._queries:
                     color_output(
                         "Unable to compare analysis files as the queries are differents",
                         model="critical",
                     )
                     sys.exit(1)
-                self.compare(previous_anlysisfile_content, new_anlysisfile_content)
+                self.compare(previous_analysisfile_content, new_analysisfile_content)
 
 
 def validate_cmd_args(args: argparse.Namespace) -> bool:
@@ -609,15 +627,15 @@ def validate_cmd_args(args: argparse.Namespace) -> bool:
         )
         return False
     elif args.execution == "compare":
-        if not args.anlysisfiles:
+        if not args.files:
             color_output(
-                "Missing argument. When the execution type is set to 'compare' the '--anlysisfiles' argument must be defined",
+                "Missing argument. When the execution type is set to 'compare' the '--files' argument must be defined",
                 model="critical",
             )
             return False
-        elif len(args.anlysisfiles) > 2:
+        elif len(args.files) > 2:
             color_output(
-                "Too many arguments. The '--anlysisfiles' argument cannot be repeated more than 2 times.",
+                "Too many arguments. The '--files' argument cannot be repeated more than 2 times.",
                 model="critical",
             )
             return False
@@ -689,6 +707,16 @@ if __name__ == "__main__":
         default=0.0,
         help="The minimum score change (percentage) to detect an issue.",
     )
+    parser.add_argument(
+        "-w",
+        "--wait",
+        type=int,
+        default=10,
+        help=(
+            "The waiting time (in seconds) to respect between queries. "
+            "It is helpful to avoid hitting the Generative AI rate limiting."
+        ),
+    )
 
     args = parser.parse_args()
     if not validate_cmd_args(args):
@@ -701,4 +729,5 @@ if __name__ == "__main__":
         args.threshold,
         args.port,
         args.auth,
+        args.wait,
     )()
