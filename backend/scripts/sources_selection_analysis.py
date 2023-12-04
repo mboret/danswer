@@ -365,41 +365,33 @@ class SelectionAnalysis:
             color_output(f"Unable to setup the requirements: {e}", model="critical")
             return False
 
-    def do_request(self, query: str) -> dict:
+    def do_request(self, path: str, data: dict) -> dict:
         """Request the Danswer API
 
         Args:
-            query (str): A query
+            path (str): API Path
+            data (dict): Post data
 
         Returns:
             dict: The Danswer API response content
         """
         cookies = {"fastapiusersauth": self._auth_cookie} if self._auth_cookie else {}
 
-        endpoint = f"http://127.0.0.1:{self._web_port}/api/direct-qa"
-        query_json = {
-            "query": query,
-            "collection": DOCUMENT_INDEX_NAME,
-            "filters": {SOURCE_TYPE: None},
-            "enable_auto_detect_filters": True,
-            "search_type": "hybrid",
-            "offset": 0,
-            "favor_recent": True,
-        }
+        endpoint = f"http://127.0.0.1:{self._web_port}/api/{path}"
         try:
-            response = requests.post(endpoint, json=query_json, cookies=cookies)
+            response = requests.post(endpoint, json=data, cookies=cookies)
             if response.status_code != 200:
                 color_output(
                     (
                         "something goes wrong while requesting the Danswer API "
-                        f"for the query '{query}': {response.text}"
+                        f"for the request '{endpoint}': {response.text}"
                     ),
                     model="critical",
                 )
                 sys.exit(1)
         except Exception as e:
             color_output(
-                f"Unable to request the Danswer API for the query '{query}': {e}",
+                f"Unable to request the Danswer API '{endpoint}': {e}",
                 model="critical",
             )
             sys.exit(1)
@@ -439,7 +431,7 @@ class SelectionAnalysis:
             pos: doc
             for pos, doc in enumerate(
                 sorted(
-                    contents["top_ranked_docs"], key=lambda d: d["score"], reverse=True
+                    contents["top_documents"], key=lambda d: d["score"], reverse=True
                 )[:5]
             )
         }
@@ -482,7 +474,20 @@ class SelectionAnalysis:
 
         for query in self._queries:
             color_output(f"Gathering data of the query: '{query}'", model="info2")
-            contents = self.do_request(query)
+            chat_session = self.do_request(
+                "chat/create-chat-session", {"persona_id": None}
+            )
+            data = {
+                "query": query,
+                "collection": DOCUMENT_INDEX_NAME,
+                "filters": {SOURCE_TYPE: None},
+                "enable_auto_detect_filters": True,
+                "search_type": "hybrid",
+                "offset": 0,
+                "favor_recent": True,
+                "chat_session_id": chat_session["chat_session_id"],
+            }
+            contents = self.do_request("direct-qa", data)
 
             analysisfile.append(
                 {"query": query, "selected_documents": self.extract_content(contents)}
